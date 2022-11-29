@@ -20,6 +20,13 @@ class LogEntry:
     self.key = key
     self.value = value
 
+  def to_dict(self):
+    return {
+      'term': self.term_id,
+      'key': self.key,
+      'value': self.value
+    }
+
 class Replica:
   def __init__(self, port, id, others):
     self.assumed_leader = UNKNOWN_ID
@@ -28,10 +35,10 @@ class Replica:
     self.id = id
     self.others = others
 
-    self.log = []
+    self.log: list[LogEntry] = []
     self.commit_index = -1
     self.values = {}
-    self.follower_commit_indices = dict.fromkeys(others, -1)
+    self.follower_confirmed_indices = dict.fromkeys(others, -1)
 
     self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.socket.bind(('localhost', 0))
@@ -78,11 +85,20 @@ class Replica:
     # add the message to the log
     self.log.append(LogEntry(self.term_number, key, value))
     # send append RPCs
-    self.replicate_put(len(self.log), key, value)
+    for follower in self.others:
+      self.send_append(follower)
 
-  def replicate_put(self, log_id: int, key: str, value: str):
-    for dest in self.others:
-      self.send({'term': self.term_number, ''}, dest, MessageType.APPEND)
+  def send_append(self, follower: str):
+      prev_log_index = self.follower_confirmed_indices[follower]
+      prev_log_term = self.log[prev_log_index].term_id
+      entries = list(map(lambda entry: entry.to_dict(), self.log[prev_log_index + 1:]))
+      self.send({
+        'term': self.term_number,
+        'prev_log_index': prev_log_index,
+        'prev_log_term': prev_log_term,
+        'entries': entries,
+        'leader_commit': self.commit_index
+      }, follower, MessageType.APPEND)
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description='run a key-value store')
