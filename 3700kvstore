@@ -70,11 +70,16 @@ class Replica:
 
   def run(self):
     while True:
-      data, addr = self.socket.recvfrom(65535)
-      msg = data.decode('utf-8')
+      readable, writable, exceptional = select.select([self.socket], [], [], .5)
+      if len(readable) > 0:
+        data, addr = self.socket.recvfrom(65535)
+        msg = data.decode('utf-8')
 
-      print("Received message '%s'" % (msg,), flush=True)
-      self.handle_msg(json.loads(msg))
+        print("Received message '%s'" % (msg,), flush=True)
+        self.handle_msg(json.loads(msg))
+      else:
+        # timer stuff
+        
 
   def handle_msg(self, msg: dict):
     msg_type = msg['type']
