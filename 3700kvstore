@@ -7,10 +7,18 @@ BROADCAST = "FFFF"
 UNKNOWN_ID = 'FFFF'
 
 class MessageType(Enum):
+  HELLO = 'hello'
   GET = 'get'
   PUT = 'put'
   REDIRECT = 'redirect'
   APPEND = 'append'
+  OK = 'ok'
+
+class LogEntry:
+  def __init__(self, term_id: int, key: str, value: str):
+    self.term_id = term_id
+    self.key = key
+    self.value = value
 
 class Replica:
   def __init__(self, port, id, others):
@@ -21,20 +29,23 @@ class Replica:
     self.others = others
 
     self.log = []
+    self.commit_index = -1
     self.values = {}
+    self.follower_commit_indices = dict.fromkeys(others, -1)
 
     self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.socket.bind(('localhost', 0))
 
     print("Replica %s starting up" % self.id, flush=True)
-    hello = { "src": self.id, "dst": BROADCAST, "leader": BROADCAST, "type": "hello" }
-    self.send(hello)
-    print("Sent hello message: %s" % hello, flush=True)
+    self.send({}, BROADCAST, MessageType.HELLO)
+    print("Sent hello message.", flush=True)
 
-  def send(self, message: dict):
+  def send(self, message: dict, to: str, t: MessageType):
     message.update({
+      'type': t,
       'src': self.id,
-      'dest':
+      'dest': to,
+      'leader': self.assumed_leader
     })
     self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
@@ -47,15 +58,31 @@ class Replica:
       self.handle_msg(json.loads(msg))
 
   def handle_msg(self, msg: dict):
+    msg_type = msg['type']
     if self.id == self.assumed_leader:
-      if msg['type'] == 'get':
-        key = msg['key']
-        if key in self.values:
-          self.send({''})
-      elif msg['type'] == 'put':
+      if msg_type == MessageType.GET:
+        self.handle_get(msg)
+      elif msg_type == MessageType.PUT:
         self.handle_put(msg)
-  def handle_put(self, msg: dict):
+    else:
+      if msg_type in [MessageType.GET, MessageType.PUT]:
+        self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
 
+  def handle_get(self, msg: dict):
+    key = msg['key']
+    value = self.values[key] if key in self.values else ''
+    self.send({'value': value, 'MID': msg['MID']}, msg['src'], MessageType.OK)
+
+  def handle_put(self, msg: dict):
+    key, value = msg['key'], msg['value']
+    # add the message to the log
+    self.log.append(LogEntry(self.term_number, key, value))
+    # send append RPCs
+    self.replicate_put(len(self.log), key, value)
+
+  def replicate_put(self, log_id: int, key: str, value: str):
+    for dest in self.others:
+      self.send({'term': self.term_number, ''}, dest, MessageType.APPEND)
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description='run a key-value store')
