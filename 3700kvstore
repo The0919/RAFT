@@ -12,6 +12,7 @@ class MessageType(Enum):
   PUT = 'put'
   REDIRECT = 'redirect'
   APPEND = 'append'
+  APPEND_ACK = 'ack'
   OK = 'ok'
 
 class LogEntry:
@@ -26,6 +27,17 @@ class LogEntry:
       'key': self.key,
       'value': self.value
     }
+
+  @staticmethod
+  def from_dict(d: dict):
+    return LogEntry(d['term'], d['key'], d['value'])
+
+  def __eq__(self, other):
+    return (
+        self.term_id == other.term_id
+        and self.key == other.key
+        and self.value == other.value
+    )
 
 class Replica:
   def __init__(self, port, id, others):
@@ -74,6 +86,8 @@ class Replica:
     else:
       if msg_type in [MessageType.GET, MessageType.PUT]:
         self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
+      elif msg_type == MessageType.APPEND:
+        self.handle_append(msg)
 
   def handle_get(self, msg: dict):
     key = msg['key']
@@ -87,6 +101,30 @@ class Replica:
     # send append RPCs
     for follower in self.others:
       self.send_append(follower)
+
+  def handle_append(self, msg: dict):
+    leader_term, prev_log_index, leader_commit \
+      = msg['term'], msg['prev_log_index'], msg['leader_commit']
+    entries = list(map(LogEntry.from_dict, msg['entries']))
+    success = (
+        leader_term >= self.term_number
+        and prev_log_index < len(self.log)
+
+
+
+        and leader_term == self.log[prev_log_index].term_id
+    )
+    if success:
+      self.update_log(entries, prev_log_index + 1)
+    if leader_commit > self.commit_index:
+      self.commit_index = min(leader_commit, prev_log_index + len(entries))
+    self.send({'term': self.term_number, 'success': success}, msg['src'], MessageType.APPEND_ACK)
+  def update_log(self, entries: list, offset: int):
+      for i in range(len(entries)):
+        log_index = offset + i
+        if not log_index < len(self.log) or self.log[log_index] != entries[i]:
+          self.log = self.log[:log_index] + entries[i:]
+          break
 
   def send_append(self, follower: str):
       prev_log_index = self.follower_confirmed_indices[follower]
