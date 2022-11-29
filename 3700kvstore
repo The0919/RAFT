@@ -83,6 +83,8 @@ class Replica:
         self.handle_get(msg)
       elif msg_type == MessageType.PUT:
         self.handle_put(msg)
+      elif msg_type == MessageType.APPEND_ACK:
+        self.handle_append_ack(msg)
     else:
       if msg_type in [MessageType.GET, MessageType.PUT]:
         self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
@@ -102,6 +104,24 @@ class Replica:
     for follower in self.others:
       self.send_append(follower)
 
+  def handle_append_ack(self, msg: dict):
+    follower, term, success = msg['src'], msg['term'], msg['success']
+    if self.term_number < term:
+      self.term_number = term
+      if self.assumed_leader == self.id:
+        self.assumed_leader = UNKNOWN_ID
+    if success:
+      confirmed_index = msg['confirmed_index']
+      # update confirmed index for follower
+      self.follower_confirmed_indices[follower] = confirmed_index
+      # update commit index if a majority of followers have confirmed up to at least
+      confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
+      if len(list(filter(confirmed_at_least, self.others))) > len(self.others) // 2:
+        self.commit_index = max(self.commit_index, confirmed_index)
+    else:
+      # todo: handle log resync
+      None
+
   def handle_append(self, msg: dict):
     leader_term, prev_log_index, leader_commit \
       = msg['term'], msg['prev_log_index'], msg['leader_commit']
@@ -116,9 +136,15 @@ class Replica:
     )
     if success:
       self.update_log(entries, prev_log_index + 1)
+    confirmed_index = len(self.log)
     if leader_commit > self.commit_index:
-      self.commit_index = min(leader_commit, prev_log_index + len(entries))
-    self.send({'term': self.term_number, 'success': success}, msg['src'], MessageType.APPEND_ACK)
+      self.commit_index = min(leader_commit, confirmed_index)
+    self.send({
+      'term': self.term_number,
+      'success': success,
+      'confirmed_index': confirmed_index
+    }, msg['src'], MessageType.APPEND_ACK)
+
   def update_log(self, entries: list, offset: int):
       for i in range(len(entries)):
         log_index = offset + i
