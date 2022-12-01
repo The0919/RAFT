@@ -73,33 +73,27 @@ class Replica:
 
     self.MESSAGE_HANDLING = {
       State.LEADER: {
-        MessageType.GET: self.handle_get
+        MessageType.GET: self.handle_get,
+        MessageType.PUT: self.handle_put,
+        MessageType.APPEND_ACK: self.handle_append_ack,
+        MessageType.REQUEST_VOTE: lambda msg: self.update_term(msg['term'])
+      }, State.FOLLOWER: {
+        MessageType.GET: self.handle_redirect,
+        MessageType.PUT: self.handle_redirect,
+        MessageType.APPEND: self.handle_append,
+        MessageType.REQUEST_VOTE: self.handle_vote_request
+      }, State.CANDIDATE: {
+        MessageType.GET: self.handle_redirect,
+        MessageType.PUT: self.handle_redirect,
+        MessageType.REQUEST_VOTE: self.handle_vote_request,
+        MessageType.REQUEST_VOTE_ACK: self.handle_vote_request_ack
       }
     }
 
   def handle_msg(self, msg: dict):
     msg_type = msg['type']
-    if self.state == State.LEADER:
-      if msg_type == MessageType.GET:
-        self.handle_get(msg)
-      elif msg_type == MessageType.PUT:
-        self.handle_put(msg)
-      elif msg_type == MessageType.APPEND_ACK:
-        self.handle_append_ack(msg)
-      elif msg_type == MessageType.REQUEST_VOTE:
-        self.update_term(msg['term'])
-    elif self.state == State.FOLLOWER:
-      if msg_type in [MessageType.GET, MessageType.PUT]:
-        self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
-      elif msg_type == MessageType.APPEND:
-        self.handle_append(msg)
-      elif msg_type == MessageType.REQUEST_VOTE:
-        self.handle_vote_request(msg)
-    elif self.state == State.CANDIDATE:
-      if msg_type == MessageType.REQUEST_VOTE:
-        self.handle_vote_request(msg)
-      elif msg_type == MessageType.REQUEST_VOTE_ACK:
-        self.handle_vote_request_ack(msg)
+    if msg_type in self.MESSAGE_HANDLING[self.state]:
+      self.MESSAGE_HANDLING[self.state][msg_type](msg)
 
   def send(self, message: dict, to: str, t: MessageType):
     message.update({
@@ -138,6 +132,9 @@ class Replica:
         self.state = State.FOLLOWER
       self.votedFor = None
       self.term_number = term
+
+  def handle_redirect(self, msg):
+    self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
 
   def handle_vote_request_ack(self, msg):
     self.update_term(msg['term'])
