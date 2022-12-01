@@ -48,6 +48,13 @@ class LogEntry:
         and self.value == other.value
     )
 
+
+def parse_msg(s: str):
+  parsed = json.loads(s)
+  parsed['type'] = MessageType[parsed['type']]
+  return parsed
+
+
 class Replica:
   def __init__(self, port, id, others):
     self.assumed_leader = UNKNOWN_ID
@@ -123,7 +130,7 @@ class Replica:
         msg = data.decode('utf-8')
 
         print("Received message '%s'" % (msg,), flush=True)
-        self.handle_msg(json.loads(msg))
+        self.handle_msg(parse_msg(msg))
 
   def update_term(self, term):
     if self.term_number < term:
