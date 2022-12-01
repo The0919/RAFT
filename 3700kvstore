@@ -105,7 +105,7 @@ class Replica:
     message.update({
       'type': t.value,
       'src': self.id,
-      'dest': to,
+      'dst': to,
       'leader': self.assumed_leader
     })
     self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
