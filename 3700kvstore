@@ -5,6 +5,8 @@ from enum import Enum
 
 BROADCAST = "FFFF"
 UNKNOWN_ID = 'FFFF'
+HEARTBEAT_INTERVAL = 1
+ELECTION_TIMEOUT = HEARTBEAT_INTERVAL * 2
 
 class MessageType(Enum):
   HELLO = 'hello'
@@ -14,6 +16,13 @@ class MessageType(Enum):
   APPEND = 'append'
   APPEND_ACK = 'ack'
   OK = 'ok'
+  REQUEST_VOTE = 'vote'
+  REQUEST_VOTE_ACK = 'vote ack'
+
+class State(Enum):
+  LEADER = 'leader'
+  FOLLOWER = 'follower'
+  CANDIDATE = 'candidate'
 
 class LogEntry:
   def __init__(self, term_id: int, key: str, value: str):
@@ -42,10 +51,13 @@ class LogEntry:
 class Replica:
   def __init__(self, port, id, others):
     self.assumed_leader = UNKNOWN_ID
+    self.state = State.FOLLOWER
     self.term_number = 0
     self.port = port
     self.id = id
     self.others = others
+    self.votes = 0
+    self.votedFor = None
 
     self.log: list[LogEntry] = []
     self.commit_index = -1
@@ -69,7 +81,18 @@ class Replica:
     self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
   def run(self):
+    timer = time.time()
     while True:
+      if self.state == State.LEADER and time.time() - timer > HEARTBEAT_INTERVAL:
+        print("HEARTBEAT SENT", flush=True)
+        timer = time.time()
+        self.send_append(BROADCAST, [])
+
+      if self.state == State.FOLLOWER and time.time() - timer > ELECTION_TIMEOUT:
+        print("NO HEARTBEAT, 'lection time", flush=True)
+        timer = time.time()
+        self.start_election()
+    
       readable, writable, exceptional = select.select([self.socket], [], [], .5)
       if len(readable) > 0:
         data, addr = self.socket.recvfrom(65535)
@@ -77,24 +100,79 @@ class Replica:
 
         print("Received message '%s'" % (msg,), flush=True)
         self.handle_msg(json.loads(msg))
-      else:
-        # timer stuff
         
-
   def handle_msg(self, msg: dict):
     msg_type = msg['type']
-    if self.id == self.assumed_leader:
+    if self.state == State.LEADER:
       if msg_type == MessageType.GET:
         self.handle_get(msg)
       elif msg_type == MessageType.PUT:
         self.handle_put(msg)
       elif msg_type == MessageType.APPEND_ACK:
         self.handle_append_ack(msg)
-    else:
+      elif msg_type == MessageType.REQUEST_VOTE:
+        self.update_term(msg['term'])
+    elif self.state == State.FOLLOWER:
       if msg_type in [MessageType.GET, MessageType.PUT]:
         self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
       elif msg_type == MessageType.APPEND:
         self.handle_append(msg)
+      elif msg_type == MessageType.REQUEST_VOTE:
+        self.handle_vote_request(msg)
+    elif self.state == State.CANDIDATE:
+      if msg_type == MessageType.REQUEST_VOTE:
+        self.handle_vote_request(msg)
+      elif msg_type == MessageType.REQUEST_VOTE_ACK:
+        self.handle_vote_request_ack(msg)
+
+
+  def update_term(self, term):
+    if self.term_number < term:
+      if self.state == State.LEADER or self.state == State.CANDIDATE:
+        self.assumed_leader = UNKNOWN_ID
+        self.state == State.FOLLOWER
+      self.votedFor = None
+      self.term_number = term
+
+  def handle_vote_request_ack(self, msg):
+    self.update_term(msg['term'])
+    if msg['voteGranted']:
+      self.votes += 1
+    if self.votes > len(self.others) // 2:
+      self.state = State.LEADER
+      self.assumed_leader = self.id
+
+  def start_election(self):
+    self.votes = 0
+    self.term_number += 1
+    self.votedFor = self.id
+    self.assumed_leader = UNKNOWN_ID
+    self.state = State.CANDIDATE
+    last_term = self.term_number if len(self.log) == 0 else self.log[-1].term_id
+    self.send({
+      'term':self.term_number,
+      'candidateId':self.id,
+      'lastLogIndex': len(self.log)-1,
+      'lastLogTerm': last_term
+      }, BROADCAST, REQUEST_VOTE)
+
+  def handle_vote_request(self, msg: dict):
+    print("GOT VOTE REQUEST", flush=True)
+    candidate_id, candidate_log_index, candidate_term =\
+        msg['candidateId'], msg['lastLogIndex'], msg['term']
+    self.update_term(candidate_term)
+    grant_vote = (
+        (self.votedFor is None or self.votedFor == candidate_id)
+        and candidate_term >= self.term_number
+        and candidate_log_index >= len(self.log)-1)
+    if grant_vote:
+      print("VOTED FOR", candidate_id, term_number, flush=True)
+      self.votedFor = candidate_id
+    self.send({
+      'term': self.term_number,
+      'voteGranted': grant_vote
+      }, candidate_id, MessageType.REQUEST_VOTE_ACK)
+
 
   def handle_get(self, msg: dict):
     key = msg['key']
@@ -111,10 +189,7 @@ class Replica:
 
   def handle_append_ack(self, msg: dict):
     follower, term, success = msg['src'], msg['term'], msg['success']
-    if self.term_number < term:
-      self.term_number = term
-      if self.assumed_leader == self.id:
-        self.assumed_leader = UNKNOWN_ID
+    self.update_term(term)
     if success:
       confirmed_index = msg['confirmed_index']
       # update confirmed index for follower
@@ -128,16 +203,13 @@ class Replica:
       None
 
   def handle_append(self, msg: dict):
-    leader_term, prev_log_index, leader_commit \
-      = msg['term'], msg['prev_log_index'], msg['leader_commit']
+    leader_term, prev_log_index, leader_commit, prev_log_term \
+      = msg['term'], msg['prev_log_index'], msg['leader_commit'], msg['prev_log_term']
     entries = list(map(LogEntry.from_dict, msg['entries']))
     success = (
         leader_term >= self.term_number
         and prev_log_index < len(self.log)
-
-
-
-        and leader_term == self.log[prev_log_index].term_id
+        and prev_log_term == self.log[prev_log_index].term_id
     )
     if success:
       self.update_log(entries, prev_log_index + 1)
@@ -157,10 +229,11 @@ class Replica:
           self.log = self.log[:log_index] + entries[i:]
           break
 
-  def send_append(self, follower: str):
+  def send_append(self, follower: str, entries=None):
       prev_log_index = self.follower_confirmed_indices[follower]
       prev_log_term = self.log[prev_log_index].term_id
-      entries = list(map(lambda entry: entry.to_dict(), self.log[prev_log_index + 1:]))
+      if entries is None:
+        entries = list(map(lambda entry: entry.to_dict(), self.log[prev_log_index + 1:]))
       self.send({
         'term': self.term_number,
         'prev_log_index': prev_log_index,
