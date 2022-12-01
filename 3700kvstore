@@ -100,6 +100,12 @@ class Replica:
 
         print("Received message '%s'" % (msg,), flush=True)
         self.handle_msg(json.loads(msg))
+
+  MESSAGE_HANDLING = {
+    State.LEADER: {
+      MessageType.GET: None
+    }
+  }
         
   def handle_msg(self, msg: dict):
     msg_type = msg['type']
@@ -130,7 +136,7 @@ class Replica:
     if self.term_number < term:
       if self.state == State.LEADER or self.state == State.CANDIDATE:
         self.assumed_leader = UNKNOWN_ID
-        self.state == State.FOLLOWER
+        self.state = State.FOLLOWER
       self.votedFor = None
       self.term_number = term
 
@@ -154,7 +160,7 @@ class Replica:
       'candidateId':self.id,
       'lastLogIndex': len(self.log)-1,
       'lastLogTerm': last_term
-      }, BROADCAST, REQUEST_VOTE)
+      }, BROADCAST, MessageType.REQUEST_VOTE)
 
   def handle_vote_request(self, msg: dict):
     print("GOT VOTE REQUEST", flush=True)
@@ -166,7 +172,7 @@ class Replica:
         and candidate_term >= self.term_number
         and candidate_log_index >= len(self.log)-1)
     if grant_vote:
-      print("VOTED FOR", candidate_id, term_number, flush=True)
+      print("VOTED FOR", candidate_id, self.term_number, flush=True)
       self.votedFor = candidate_id
     self.send({
       'term': self.term_number,
