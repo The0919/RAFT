@@ -51,7 +51,7 @@ class LogEntry:
 
 def parse_msg(s: str):
   parsed = json.loads(s)
-  parsed['type'] = MessageType[parsed['type']]
+  parsed['type'] = MessageType(parsed['type'])
   return parsed
 
 
@@ -148,6 +148,7 @@ class Replica:
     if msg['voteGranted']:
       self.votes += 1
     if self.votes > len(self.others) // 2:
+      print("I WON THE ELECTRON", flush=True)
       self.state = State.LEADER
       self.assumed_leader = self.id
 
