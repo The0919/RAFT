@@ -71,9 +71,39 @@ class Replica:
     self.send({}, BROADCAST, MessageType.HELLO)
     print("Sent hello message.", flush=True)
 
+    self.MESSAGE_HANDLING = {
+      State.LEADER: {
+        MessageType.GET: self.handle_get
+      }
+    }
+
+  def handle_msg(self, msg: dict):
+    msg_type = msg['type']
+    if self.state == State.LEADER:
+      if msg_type == MessageType.GET:
+        self.handle_get(msg)
+      elif msg_type == MessageType.PUT:
+        self.handle_put(msg)
+      elif msg_type == MessageType.APPEND_ACK:
+        self.handle_append_ack(msg)
+      elif msg_type == MessageType.REQUEST_VOTE:
+        self.update_term(msg['term'])
+    elif self.state == State.FOLLOWER:
+      if msg_type in [MessageType.GET, MessageType.PUT]:
+        self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
+      elif msg_type == MessageType.APPEND:
+        self.handle_append(msg)
+      elif msg_type == MessageType.REQUEST_VOTE:
+        self.handle_vote_request(msg)
+    elif self.state == State.CANDIDATE:
+      if msg_type == MessageType.REQUEST_VOTE:
+        self.handle_vote_request(msg)
+      elif msg_type == MessageType.REQUEST_VOTE_ACK:
+        self.handle_vote_request_ack(msg)
+
   def send(self, message: dict, to: str, t: MessageType):
     message.update({
-      'type': t,
+      'type': t.value,
       'src': self.id,
       'dest': to,
       'leader': self.assumed_leader
@@ -100,37 +130,6 @@ class Replica:
 
         print("Received message '%s'" % (msg,), flush=True)
         self.handle_msg(json.loads(msg))
-
-  MESSAGE_HANDLING = {
-    State.LEADER: {
-      MessageType.GET: None
-    }
-  }
-        
-  def handle_msg(self, msg: dict):
-    msg_type = msg['type']
-    if self.state == State.LEADER:
-      if msg_type == MessageType.GET:
-        self.handle_get(msg)
-      elif msg_type == MessageType.PUT:
-        self.handle_put(msg)
-      elif msg_type == MessageType.APPEND_ACK:
-        self.handle_append_ack(msg)
-      elif msg_type == MessageType.REQUEST_VOTE:
-        self.update_term(msg['term'])
-    elif self.state == State.FOLLOWER:
-      if msg_type in [MessageType.GET, MessageType.PUT]:
-        self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
-      elif msg_type == MessageType.APPEND:
-        self.handle_append(msg)
-      elif msg_type == MessageType.REQUEST_VOTE:
-        self.handle_vote_request(msg)
-    elif self.state == State.CANDIDATE:
-      if msg_type == MessageType.REQUEST_VOTE:
-        self.handle_vote_request(msg)
-      elif msg_type == MessageType.REQUEST_VOTE_ACK:
-        self.handle_vote_request_ack(msg)
-
 
   def update_term(self, term):
     if self.term_number < term:
