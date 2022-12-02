@@ -237,8 +237,8 @@ class Replica:
       self.state = State.FOLLOWER
     success = (
         leader_term >= self.term_number
-        and 0 < prev_log_index < len(self.log)
-        and prev_log_term == self.log[prev_log_index].term_id
+        and prev_log_index < len(self.log)
+        and (prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id)
     )
     if success:
       self.update_log(entries, prev_log_index + 1)
