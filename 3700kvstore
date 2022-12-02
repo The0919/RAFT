@@ -210,10 +210,10 @@ class Replica:
     self.log.append(LogEntry(self.term_number, key, value))
     # send append RPCs
     for follower in self.others:
-      self.send_append(follower)
+      self.send_append(follower, putter=msg['src'], mid=msg['MID'])
 
   def handle_append_ack(self, msg: dict):
-    follower, term, success = msg['src'], msg['term'], msg['success']
+    follower, term, success, mid, putter = msg['src'], msg['term'], msg['success'], msg['MID'], msg['putter']
     self.update_term(term)
     if success:
       confirmed_index = msg['confirmed_index']
@@ -223,13 +223,14 @@ class Replica:
       confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
       if len(list(filter(confirmed_at_least, self.others))) > len(self.others) // 2:
         self.commit_index = max(self.commit_index, confirmed_index)
+        self.send({'MID': mid}, putter, MessageType.OK)
     else:
       # todo: handle log resync
       None
 
   def handle_append(self, msg: dict):
-    leader_term, prev_log_index, leader_commit, prev_log_term \
-      = msg['term'], msg['prev_log_index'], msg['leader_commit'], msg['prev_log_term']
+    leader_term, prev_log_index, leader_commit, prev_log_term, putter \
+      = msg['term'], msg['prev_log_index'], msg['leader_commit'], msg['prev_log_term'], msg['putter']
     entries = list(map(LogEntry.from_dict, msg['entries']))
     if leader_term >= self.term_number:
       self.assumed_leader = msg['src']
@@ -242,13 +243,21 @@ class Replica:
     )
     if success:
       self.update_log(entries, prev_log_index + 1)
+    else:
+      print('leader_term:', leader_term, flush=True)
+      print('prev_log_index', prev_log_index, flush=True)
+      print('leader_term >= self.term_number', leader_term >= self.term_number, flush=True)
+      print('prev_log_index < len(self.log)', prev_log_index < len(self.log), flush=True)
+      print('(prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id)', (prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id), flush=True)
     confirmed_index = len(self.log)
     if leader_commit > self.commit_index:
       self.commit_index = min(leader_commit, confirmed_index)
     self.send({
       'term': self.term_number,
       'success': success,
-      'confirmed_index': confirmed_index
+      'confirmed_index': confirmed_index,
+      'putter': putter,
+      'MID': msg['MID']
     }, msg['src'], MessageType.APPEND_ACK)
 
   def update_log(self, entries: list, offset: int):
@@ -258,7 +267,7 @@ class Replica:
           self.log = self.log[:log_index] + entries[i:]
           break
 
-  def send_append(self, follower: str, entries=None):
+  def send_append(self, follower: str, entries=None, putter=None, mid=None):
       prev_log_index = self.follower_confirmed_indices[follower]
       # Log is empty/prev_log_index starts as -1, creates index error
       # sets prev_log_term to self term number, probably not right!!
@@ -271,7 +280,9 @@ class Replica:
         'prev_log_index': prev_log_index,
         'prev_log_term': prev_log_term,
         'entries': entries,
-        'leader_commit': self.commit_index
+        'leader_commit': self.commit_index,
+        'putter': putter,
+        'MID': mid
       }, follower, MessageType.APPEND)
 
 if __name__ == "__main__":
