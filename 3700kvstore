@@ -247,8 +247,10 @@ class Replica:
       print('leader_term:', leader_term, flush=True)
       print('prev_log_index', prev_log_index, flush=True)
       print('leader_term >= self.term_number', leader_term >= self.term_number, flush=True)
-      print('prev_log_index < len(self.log)', prev_log_index < len(self.log), flush=True)
-      print('(prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id)', (prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id), flush=True)
+      if leader_term >= self.term_number:
+        print('prev_log_index < len(self.log)', prev_log_index < len(self.log), flush=True)
+      if leader_term >= self.term_number and prev_log_index < len(self.log):
+        print('(prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id)', (prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id), flush=True)
     confirmed_index = len(self.log)
     if leader_commit > self.commit_index:
       self.commit_index = min(leader_commit, confirmed_index)
