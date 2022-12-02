@@ -40,6 +40,9 @@ class LogEntry:
       'value': self.value
     }
 
+  def __str__(self):
+    return str(self.to_dict())
+
   @staticmethod
   def from_dict(d: dict):
     return LogEntry(d['term'], d['key'], d['value'])
