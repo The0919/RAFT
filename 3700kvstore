@@ -251,7 +251,7 @@ class Replica:
         print('prev_log_index < len(self.log)', prev_log_index < len(self.log), flush=True)
       if leader_term >= self.term_number and prev_log_index < len(self.log):
         print('(prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id)', (prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id), flush=True)
-    confirmed_index = len(self.log)
+    confirmed_index = len(self.log) - 1
     if leader_commit > self.commit_index:
       self.commit_index = min(leader_commit, confirmed_index)
     self.send({
