@@ -74,6 +74,8 @@ class Replica:
     self.values = {}
     self.follower_confirmed_indices = dict.fromkeys(others, -1)
 
+    self.request_queue = []
+
     self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.socket.bind(('localhost', 0))
 
@@ -93,8 +95,8 @@ class Replica:
         MessageType.APPEND: self.handle_append,
         MessageType.REQUEST_VOTE: self.handle_vote_request
       }, State.CANDIDATE: {
-        MessageType.GET: self.handle_redirect,
-        MessageType.PUT: self.handle_redirect,
+        MessageType.GET: self.handle_defer,
+        MessageType.PUT: self.handle_defer,
         MessageType.REQUEST_VOTE: self.handle_vote_request,
         MessageType.REQUEST_VOTE_ACK: self.handle_vote_request_ack
       }
@@ -123,7 +125,7 @@ class Replica:
         for other in self.others:
           self.send_append(other, [])
 
-      if self.state == State.FOLLOWER and time.time() - timer > ELECTION_TIMEOUT:
+      if self.state == State.FOLLOWER and time.time() - timer > ELECTION_TIMEOUT and self.votedFor is None:
         print("NO HEARTBEAT, 'lection time", flush=True)
         timer = time.time()
         self.start_election()
@@ -147,6 +149,9 @@ class Replica:
   def handle_redirect(self, msg):
     self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
 
+  def handle_defer(self, msg):
+    self.request_queue.append(msg)
+
   def handle_vote_request_ack(self, msg):
     self.update_term(msg['term'])
     if msg['voteGranted']:
@@ -155,6 +160,7 @@ class Replica:
       print("I WON THE ELECTRON", flush=True)
       self.state = State.LEADER
       self.assumed_leader = self.id
+      self.process_queue()
       for other in self.others:
         self.send_append(other, [])
 
@@ -189,6 +195,9 @@ class Replica:
       'voteGranted': grant_vote
       }, candidate_id, MessageType.REQUEST_VOTE_ACK)
 
+  def process_queue(self):
+    while len(self.request_queue) > 0:
+      self.handle_msg(self.request_queue.pop())
 
   def handle_get(self, msg: dict):
     key = msg['key']
@@ -228,8 +237,7 @@ class Replica:
       self.state = State.FOLLOWER
     success = (
         leader_term >= self.term_number
-        and prev_log_index > 0
-        and prev_log_index < len(self.log)
+        and 0 < prev_log_index < len(self.log)
         and prev_log_term == self.log[prev_log_index].term_id
     )
     if success:
