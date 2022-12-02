@@ -263,11 +263,13 @@ class Replica:
     }, msg['src'], MessageType.APPEND_ACK)
 
   def update_log(self, entries: list, offset: int):
-      for i in range(len(entries)):
-        log_index = offset + i
-        if not log_index < len(self.log) or self.log[log_index] != entries[i]:
-          self.log = self.log[:log_index] + entries[i:]
-          break
+    before = list(self.log)
+    for i in range(len(entries)):
+      log_index = offset + i
+      if not log_index < len(self.log) or self.log[log_index] != entries[i]:
+        self.log = self.log[:log_index] + entries[i:]
+        break
+    print('updated log from', before, 'to', self.log, flush=True)
 
   def send_append(self, follower: str, entries=None, putter=None, mid=None):
       prev_log_index = self.follower_confirmed_indices[follower]
