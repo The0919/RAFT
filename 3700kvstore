@@ -241,7 +241,7 @@ class Replica:
         and prev_log_index < len(self.log)
         and (prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id)
     )
-    if success:
+    if success and len(msg['entries']) > 0:
       self.update_log(entries, prev_log_index + 1)
     else:
       print('leader_term:', leader_term, flush=True)
