@@ -76,7 +76,7 @@ class Replica:
     self.follower_confirmed_indices = dict.fromkeys(others, -1)
 
     self.request_queue = []
-    self.mid_responses = {}
+    self.put_status = {}
 
     self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.socket.bind(('localhost', 0))
@@ -218,22 +218,23 @@ class Replica:
     follower, term, success = msg['src'], msg['term'], msg['success']
     self.update_term(term)
     if 'MID' in msg:
-      self.mid_responses[msg['MID']] += 1
+      self.put_status[msg['MID']][0] += 1
 
     confirmed_index = msg['confirmed_index']
     confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
     majority_confirmed = lambda: len(list(filter(confirmed_at_least, self.others))) > len(self.others) // 2
+    ack_count, already_responded = self.put_status[msg['MID']]
     if success:
       # update confirmed index for follower
       self.follower_confirmed_indices[follower] = confirmed_index
       # update commit index if a majority of followers have confirmed up to at least
-      if majority_confirmed():
+      if not already_responded and majority_confirmed():
         self.commit_to(confirmed_index)
         if 'MID' in msg:
           self.send({'MID': msg['MID']}, msg['putter'], MessageType.OK)
     else:
       # todo: handle log resync
-      if self.mid_responses == len(self.others) and not majority_confirmed():
+      if not already_responded and ack_count == len(self.others) and not majority_confirmed():
         self.send({'MID': msg['MID']}, msg['putter'], MessageType.FAIL)
 
   def commit_to(self, index):
@@ -310,7 +311,7 @@ class Replica:
         'leader_commit': self.commit_index
       }
       if putter is not None:
-        self.mid_responses[mid] = 0
+        self.put_status[mid] = 0
         response.update({
           'putter': putter,
           'MID': mid
