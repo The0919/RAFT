@@ -21,6 +21,7 @@ class MessageType(Enum):
   OK = 'ok'
   REQUEST_VOTE = 'vote'
   REQUEST_VOTE_ACK = 'vote ack'
+  FAIL = 'fail'
 
 class State(Enum):
   LEADER = 'leader'
@@ -230,7 +231,7 @@ class Replica:
           self.send({'MID': msg['MID']}, msg['putter'], MessageType.OK)
     else:
       # todo: handle log resync
-      None
+      self.send({'MID': msg['MID']}, msg['putter'], MessageType.FAIL)
 
   def commit_to(self, index):
     to = min(index, len(self.log) - 1)
