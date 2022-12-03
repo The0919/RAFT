@@ -8,9 +8,6 @@ UNKNOWN_ID = 'FFFF'
 HEARTBEAT_INTERVAL = .2
 ELECTION_TIMEOUT = HEARTBEAT_INTERVAL * 2
 
-# LOOK AT THIS POST, CURRENT ISSUE WITH RECEIVEING MESSAGES WHEN THERE IS NO LEADER,
-# GETS BORADCAST TO EVERYONE OVER AND OVER
-# https://piazza.com/class/l7kwgqgh3pd6vc/post/728
 class MessageType(Enum):
   HELLO = 'hello'
   GET = 'get'
@@ -234,7 +231,10 @@ class Replica:
 
   def commit_to(self, index):
     to = min(index, len(self.log) - 1)
-    for i in range(self.commit_index, to + 1):
+    for i in range(self.commit_index + 1, to + 1):
+      #if i not in self.log:
+      #  print(i, len(self.log), "BLEGGGGG bad")
+      #  sys.exit()
       entry = self.log[i]
       self.values[entry.key] = entry.value
     self.commit_index = max(self.commit_index, to)
