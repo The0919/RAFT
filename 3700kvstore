@@ -216,7 +216,7 @@ class Replica:
       self.send_append(follower, putter=msg['src'], mid=msg['MID'])
 
   def handle_append_ack(self, msg: dict):
-    follower, term, success, mid, putter = msg['src'], msg['term'], msg['success'], msg['MID'], msg['putter']
+    follower, term, success = msg['src'], msg['term'], msg['success']
     self.update_term(term)
     if success:
       confirmed_index = msg['confirmed_index']
@@ -225,11 +225,19 @@ class Replica:
       # update commit index if a majority of followers have confirmed up to at least
       confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
       if len(list(filter(confirmed_at_least, self.others))) > len(self.others) // 2:
-        self.commit_index = max(self.commit_index, confirmed_index)
-        self.send({'MID': mid}, putter, MessageType.OK)
+        self.commit_to(confirmed_index)
+        if 'MID' in msg:
+          self.send({'MID': msg['MID']}, msg['putter'], MessageType.OK)
     else:
       # todo: handle log resync
       None
+
+  def commit_to(self, index):
+    to = min(index, len(self.log) - 1)
+    for i in range(self.commit_index, to + 1):
+      entry = self.log[i]
+      self.values[entry.key] = entry.value
+    self.commit_index = max(self.commit_index, to)
 
   def handle_append(self, msg: dict):
     leader_term, prev_log_index, leader_commit, prev_log_term, putter \
@@ -256,7 +264,7 @@ class Replica:
         print('(prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id)', (prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id), flush=True)
     confirmed_index = len(self.log) - 1
     if leader_commit > self.commit_index:
-      self.commit_index = min(leader_commit, confirmed_index)
+      self.commit_to(leader_commit)
     self.send({
       'term': self.term_number,
       'success': success,
@@ -282,15 +290,19 @@ class Replica:
           else self.log[prev_log_index].term_id
       if entries is None:
         entries = list(map(lambda entry: entry.to_dict(), self.log[prev_log_index + 1:]))
-      self.send({
+      response = {
         'term': self.term_number,
         'prev_log_index': prev_log_index,
         'prev_log_term': prev_log_term,
         'entries': entries,
-        'leader_commit': self.commit_index,
-        'putter': putter,
-        'MID': mid
-      }, follower, MessageType.APPEND)
+        'leader_commit': self.commit_index
+      }
+      if putter is not None:
+        response.update({
+          'putter': putter,
+          'MID': mid
+        })
+      self.send(response, follower, MessageType.APPEND)
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description='run a key-value store')
