@@ -41,6 +41,9 @@ class LogEntry:
   def __str__(self):
     return str(self.to_dict())
 
+  def __repr__(self):
+    return self.__str__()
+
   @staticmethod
   def from_dict(d: dict):
     return LogEntry(d['term'], d['key'], d['value'])
@@ -80,6 +83,8 @@ class Replica:
 
     self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.socket.bind(('localhost', 0))
+
+    self.not_responded_puts = set()
 
     print("Replica %s starting up" % self.id, flush=True)
     self.send({}, BROADCAST, MessageType.HELLO)
@@ -211,6 +216,7 @@ class Replica:
     # add the message to the log
     self.log.append(LogEntry(self.term_number, key, value))
     # send append RPCs
+    self.not_responded_puts.add(msg['MID'])
     for follower in self.others:
       self.send_append(follower, putter=msg['src'], mid=msg['MID'])
 
@@ -232,10 +238,13 @@ class Replica:
       if not already_responded and majority_confirmed():
         self.commit_to(confirmed_index)
         self.send({'MID': msg['MID']}, msg['putter'], MessageType.OK)
+        self.not_responded_puts.remove(msg['MID'])
     else:
       # todo: handle log resync
       if not already_responded and ack_count == len(self.others) and not majority_confirmed():
         self.send({'MID': msg['MID']}, msg['putter'], MessageType.FAIL)
+        self.not_responded_puts.remove(msg['MID'])
+    print('STILL HAVE NOT RESPONDED TO: ', self.not_responded_puts)
 
   def commit_to(self, index):
     to = min(index, len(self.log) - 1)
