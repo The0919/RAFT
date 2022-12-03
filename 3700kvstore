@@ -256,13 +256,14 @@ class Replica:
     if success and len(msg['entries']) > 0:
       self.update_log(entries, prev_log_index + 1)
     else:
+      print("FAILED")
       print('leader_term:', leader_term, flush=True)
       print('prev_log_index', prev_log_index, flush=True)
       print('leader_term >= self.term_number', leader_term >= self.term_number, flush=True)
       if leader_term >= self.term_number:
-        print('prev_log_index < len(self.log)', prev_log_index < len(self.log), flush=True)
-      if leader_term >= self.term_number and prev_log_index < len(self.log):
-        print('(prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id)', (prev_log_index == -1 or prev_log_term == self.log[prev_log_index].term_id), flush=True)
+        print('(prev_log_index == -1 or (prev_log_index < len(self.log)', prev_log_index == -1 or prev_log_index < len(self.log), flush=True)
+      if leader_term >= self.term_number and prev_log_index < len(self.log) and prev_log_index > 0:
+        print('prev_log_term == self.log[prev_log_index].term_id)', prev_log_term == self.log[prev_log_index].term_id, flush=True)
     confirmed_index = len(self.log) - 1
     if leader_commit > self.commit_index:
       self.commit_to(leader_commit)
