@@ -311,7 +311,7 @@ class Replica:
         'leader_commit': self.commit_index
       }
       if putter is not None:
-        self.put_status[mid] = 0
+        self.put_status[mid] = 0, False
         response.update({
           'putter': putter,
           'MID': mid
