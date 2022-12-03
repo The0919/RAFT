@@ -219,12 +219,12 @@ class Replica:
     self.update_term(term)
     if 'MID' not in msg:
       return
-    self.put_status[msg['MID']][0] += 1
+    ack_count, already_responded = self.put_status[msg['MID']]
+    self.put_status[msg['MID']] = ack_count + 1, already_responded
 
     confirmed_index = msg['confirmed_index']
     confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
     majority_confirmed = lambda: len(list(filter(confirmed_at_least, self.others))) > len(self.others) // 2
-    ack_count, already_responded = self.put_status[msg['MID']]
     if success:
       # update confirmed index for follower
       self.follower_confirmed_indices[follower] = confirmed_index
