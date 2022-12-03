@@ -278,7 +278,6 @@ class Replica:
       'confirmed_index': confirmed_index
     }
     if 'MID' in msg:
-      self.mid_responses[msg['MID']] = 0
       response.update({
         'putter': msg['putter'],
         'MID': msg['MID']
@@ -310,6 +309,7 @@ class Replica:
         'leader_commit': self.commit_index
       }
       if putter is not None:
+        self.mid_responses[mid] = 0
         response.update({
           'putter': putter,
           'MID': mid
