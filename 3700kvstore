@@ -217,8 +217,9 @@ class Replica:
   def handle_append_ack(self, msg: dict):
     follower, term, success = msg['src'], msg['term'], msg['success']
     self.update_term(term)
-    if 'MID' in msg:
-      self.put_status[msg['MID']][0] += 1
+    if 'MID' not in msg:
+      return
+    self.put_status[msg['MID']][0] += 1
 
     confirmed_index = msg['confirmed_index']
     confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
@@ -230,8 +231,7 @@ class Replica:
       # update commit index if a majority of followers have confirmed up to at least
       if not already_responded and majority_confirmed():
         self.commit_to(confirmed_index)
-        if 'MID' in msg:
-          self.send({'MID': msg['MID']}, msg['putter'], MessageType.OK)
+        self.send({'MID': msg['MID']}, msg['putter'], MessageType.OK)
     else:
       # todo: handle log resync
       if not already_responded and ack_count == len(self.others) and not majority_confirmed():
