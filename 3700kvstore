@@ -220,10 +220,10 @@ class Replica:
     if 'MID' in msg:
       self.mid_responses[msg['MID']] += 1
 
+    confirmed_index = msg['confirmed_index']
     confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
     majority_confirmed = len(list(filter(confirmed_at_least, self.others))) > len(self.others) // 2
     if success:
-      confirmed_index = msg['confirmed_index']
       # update confirmed index for follower
       self.follower_confirmed_indices[follower] = confirmed_index
       # update commit index if a majority of followers have confirmed up to at least
