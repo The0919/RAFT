@@ -225,8 +225,9 @@ class Replica:
     self.update_term(term)
     if 'MID' not in msg:
       return
+    mid, putter = msg['MID'], msg['putter']
     ack_count, already_responded = self.put_status[msg['MID']]
-    self.put_status[msg['MID']] = ack_count + 1, already_responded
+    self.put_status[mid] = ack_count + 1, already_responded
 
     confirmed_index = msg['confirmed_index']
     confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
@@ -237,13 +238,15 @@ class Replica:
       # update commit index if a majority of followers have confirmed up to at least
       if not already_responded and majority_confirmed():
         self.commit_to(confirmed_index)
-        self.send({'MID': msg['MID']}, msg['putter'], MessageType.OK)
-        self.not_responded_puts.remove(msg['MID'])
+        self.send({'MID': mid}, putter, MessageType.OK)
+        self.not_responded_puts.remove(mid)
+        self.put_status[mid] = ack_count, True
     else:
       # todo: handle log resync
       if not already_responded and ack_count == len(self.others) and not majority_confirmed():
-        self.send({'MID': msg['MID']}, msg['putter'], MessageType.FAIL)
-        self.not_responded_puts.remove(msg['MID'])
+        self.send({'MID': mid}, putter, MessageType.FAIL)
+        self.not_responded_puts.remove(mid)
+        self.put_status[mid] = ack_count, True
     print('STILL HAVE NOT RESPONDED TO: ', self.not_responded_puts)
 
   def commit_to(self, index):
