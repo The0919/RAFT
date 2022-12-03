@@ -85,6 +85,9 @@ class Replica:
     self.socket.bind(('localhost', 0))
 
     self.not_responded_puts = set()
+    self.freq = {}
+    for t in MessageType:
+      self.freq[t] = 0
 
     #print("Replica %s starting up" % self.id, flush=True)
     self.send({}, BROADCAST, MessageType.HELLO)
@@ -115,7 +118,8 @@ class Replica:
       self.MESSAGE_HANDLING[self.state][msg_type](msg)
 
   def send(self, message: dict, to: str, t: MessageType):
-    print("Sent:", t.value, flush=True)
+    self.freq[t] += 1
+    print("Sent:", t.value, 'freqs:', self.freq, flush=True)
     message.update({
       'type': t.value,
       'src': self.id,
