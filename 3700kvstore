@@ -87,7 +87,7 @@ class Replica:
     self.not_responded_puts = set()
     self.freq = {}
     for t in MessageType:
-      self.freq[t] = 0
+      self.freq[t.value] = 0
 
     #print("Replica %s starting up" % self.id, flush=True)
     self.send({}, BROADCAST, MessageType.HELLO)
@@ -272,12 +272,14 @@ class Replica:
       self.assumed_leader = msg['src']
       self.term_number = leader_term
       self.state = State.FOLLOWER
+    if len(msg['entries'] == 0):
+      return
     success = (
         leader_term >= self.term_number
         and (prev_log_index == -1 or (prev_log_index < len(self.log)
         and prev_log_term == self.log[prev_log_index].term_id))
     )
-    if success and len(msg['entries']) > 0:
+    if success:
       self.update_log(entries, prev_log_index + 1)
     #else:
       #print("FAILED")
