@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-
+# RAFT PAPER SECION 5.4.2??????????
 import argparse, socket, time, json, select, struct, sys, math, os
 from enum import Enum
 
 BROADCAST = "FFFF"
 UNKNOWN_ID = 'FFFF'
 HEARTBEAT_INTERVAL = .25
-ELECTION_TIMEOUT = HEARTBEAT_INTERVAL * 2
+ELECTION_TIMEOUT = HEARTBEAT_INTERVAL * 5
 
 class MessageType(Enum):
   HELLO = 'hello'
@@ -26,16 +26,20 @@ class State(Enum):
   CANDIDATE = 'candidate'
 
 class LogEntry:
-  def __init__(self, term_id: int, key: str, value: str):
+  def __init__(self, term_id: int, key: str, value: str, mid: str, putter: str):
     self.term_id = term_id
     self.key = key
     self.value = value
+    self.mid = mid
+    self.putter = putter
 
   def to_dict(self):
     return {
       'term': self.term_id,
       'key': self.key,
-      'value': self.value
+      'value': self.value,
+      'MID': self.mid,
+      'putter': self.putter
     }
 
   def __str__(self):
@@ -46,7 +50,7 @@ class LogEntry:
 
   @staticmethod
   def from_dict(d: dict):
-    return LogEntry(d['term'], d['key'], d['value'])
+    return LogEntry(d['term'], d['key'], d['value'], d['MID'], d['putter'])
 
   def __eq__(self, other):
     return (
@@ -70,7 +74,7 @@ class Replica:
     self.port = port
     self.id = id
     self.others = others
-    self.votes = 0
+    self.votes = None
     self.votedFor = None
 
     self.log: list[LogEntry] = []
@@ -84,14 +88,16 @@ class Replica:
     self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.socket.bind(('localhost', 0))
 
-    self.not_responded_puts = set()
+    self.not_responded_puts = []
     self.freq = {}
     for t in MessageType:
       self.freq[t.value] = 0
 
-    #print("Replica %s starting up" % self.id, flush=True)
+    self.timer = time.time()
+
+    print("Replica %s starting up" % self.id, flush=True)
     self.send({}, BROADCAST, MessageType.HELLO)
-    #print("Sent hello message.", flush=True)
+    print("Sent hello message.", flush=True)
 
     self.MESSAGE_HANDLING = {
       State.LEADER: {
@@ -108,38 +114,43 @@ class Replica:
         MessageType.GET: self.handle_defer,
         MessageType.PUT: self.handle_defer,
         MessageType.REQUEST_VOTE: self.handle_vote_request,
-        MessageType.REQUEST_VOTE_ACK: self.handle_vote_request_ack
+        MessageType.REQUEST_VOTE_ACK: self.handle_vote_request_ack,
+        MessageType.APPEND: self.handle_append
       }
     }
 
   def handle_msg(self, msg: dict):
     msg_type = msg['type']
+    #print("Recieved Message:", self.state)
     if msg_type in self.MESSAGE_HANDLING[self.state]:
       self.MESSAGE_HANDLING[self.state][msg_type](msg)
 
   def send(self, message: dict, to: str, t: MessageType):
     self.freq[t.value] += 1
-    print("Sent:", t.value, 'freqs:', self.freq, flush=True)
+    #print("Sent:", t.value, 'freqs:', self.freq, flush=True)
     message.update({
       'type': t.value,
       'src': self.id,
       'dst': to,
       'leader': self.assumed_leader
     })
+    if to not in self.others and to != self.id:
+      print("SENT MESSAGE TO CLIENT", message)
     self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
   def run(self):
-    timer = time.time()
     while True:
-      if self.state == State.LEADER and time.time() - timer > HEARTBEAT_INTERVAL:
-        #print("HEARTBEAT SENT", flush=True)
-        timer = time.time()
+      if self.state == State.LEADER:
+        print('STILL HAVE NOT RESPONDED TO: ', self.not_responded_puts)
+      if self.state == State.LEADER and time.time() - self.timer > HEARTBEAT_INTERVAL:
+        print("HEARTBEAT SENT", flush=True)
+        self.timer = time.time()
         for other in self.others:
           self.send_append(other, [])
 
-      if self.state == State.FOLLOWER and time.time() - timer > ELECTION_TIMEOUT and self.votedFor is None:
-        #print("NO HEARTBEAT, 'lection time", flush=True)
-        timer = time.time()
+      if self.state != State.LEADER and time.time() - self.timer > ELECTION_TIMEOUT:
+        print("NO HEARTBEAT, 'lection time", flush=True)
+        self.timer = time.time()
         self.start_election()
     
       readable, writable, exceptional = select.select([self.socket], [], [], .5)
@@ -147,7 +158,7 @@ class Replica:
         data, addr = self.socket.recvfrom(65535)
         msg = data.decode('utf-8')
 
-        #print("Received message '%s'" % (msg,), flush=True)
+        print("Received message '%s'" % (msg,), flush=True)
         self.handle_msg(parse_msg(msg))
 
   def update_term(self, term):
@@ -159,6 +170,9 @@ class Replica:
       self.term_number = term
 
   def handle_redirect(self, msg):
+    if self.assumed_leader == UNKNOWN_ID:
+      self.handle_defer(msg)
+      return
     self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
 
   def handle_defer(self, msg):
@@ -166,18 +180,21 @@ class Replica:
 
   def handle_vote_request_ack(self, msg):
     self.update_term(msg['term'])
+    voted_for, total_votes = self.votes
     if msg['voteGranted']:
-      self.votes += 1
-    if self.votes > len(self.others) // 2:
-      #print("I WON THE ELECTRON", flush=True)
+      self.votes = voted_for+1, total_votes+1
+    else:
+      self.votes = voted_for, total_votes+1
+    if voted_for > (len(self.others)+1) // 2:
+      print("I WON THE ELECTRON", flush=True)
       self.state = State.LEADER
       self.assumed_leader = self.id
       self.process_queue()
       for other in self.others:
-        self.send_append(other, [])
+        self.send_append(other)
 
   def start_election(self):
-    self.votes = 1
+    self.votes = 1, 1
     self.term_number += 1
     self.votedFor = self.id
     self.assumed_leader = UNKNOWN_ID
@@ -192,6 +209,7 @@ class Replica:
 
   def handle_vote_request(self, msg: dict):
     #print("GOT VOTE REQUEST", flush=True)
+    self.timer = time.time()
     candidate_id, candidate_log_index, candidate_term =\
         msg['candidateId'], msg['lastLogIndex'], msg['term']
     self.update_term(candidate_term)
@@ -219,52 +237,51 @@ class Replica:
   def handle_put(self, msg: dict):
     key, value = msg['key'], msg['value']
     # add the message to the log
-    self.log.append(LogEntry(self.term_number, key, value))
+    self.log.append(LogEntry(self.term_number, key, value, msg['MID'], msg['src']))
+    self.put_status[msg['MID']] = 0, False
     # send append RPCs
-    self.not_responded_puts.add(msg['MID'])
+    self.not_responded_puts.append(msg['MID'])
     for follower in self.others:
-      self.send_append(follower, putter=msg['src'], mid=msg['MID'])
+      self.send_append(follower)
 
   def handle_append_ack(self, msg: dict):
     follower, term, success = msg['src'], msg['term'], msg['success']
     self.update_term(term)
-    if 'MID' not in msg:
-      return
-    mid, putter = msg['MID'], msg['putter']
-    ack_count, already_responded = self.put_status[msg['MID']]
+    mid = self.log[msg['confirmed_index']].mid
+    ack_count, already_responded = self.put_status[mid]
     self.put_status[mid] = ack_count + 1, already_responded
 
     confirmed_index = msg['confirmed_index']
     confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
-    majority_confirmed = lambda: len(list(filter(confirmed_at_least, self.others))) > len(self.others) // 2
+    majority_confirmed = lambda: len(list(filter(confirmed_at_least, self.others)))+1 > (len(self.others)+1) // 2
     if success:
       # update confirmed index for follower
       self.follower_confirmed_indices[follower] = confirmed_index
       # update commit index if a majority of followers have confirmed up to at least
       if not already_responded and majority_confirmed():
         self.commit_to(confirmed_index)
-        self.send({'MID': mid}, putter, MessageType.OK)
-        self.not_responded_puts.remove(mid)
-        self.put_status[mid] = ack_count, True
     else:
       # todo: handle log resync
       if not already_responded and ack_count == len(self.others) and not majority_confirmed():
         self.send({'MID': mid}, putter, MessageType.FAIL)
         self.not_responded_puts.remove(mid)
         self.put_status[mid] = ack_count, True
-    print('STILL HAVE NOT RESPONDED TO: ', self.not_responded_puts)
 
   def commit_to(self, index):
     to = min(index, len(self.log) - 1)
-    for i in range(self.commit_index + 1, to + 1):
-      #if i not in self.log:
-      #  print(i, len(self.log), "BLEGGGGG bad")
-      #  sys.exit()
-      entry = self.log[i]
-      self.values[entry.key] = entry.value
+    ci = self.commit_index + 1
     self.commit_index = max(self.commit_index, to)
+    for i in range(ci, to + 1):
+      entry = self.log[i]
+      if entry.mid in self.not_responded_puts:
+        self.values[entry.key] = entry.value
+        self.send({'MID': entry.mid}, entry.putter, MessageType.OK)
+        self.not_responded_puts.remove(entry.mid)
+        self.put_status[entry.mid] = 0, True
+    
 
   def handle_append(self, msg: dict):
+    self.timer = time.time()
     leader_term, prev_log_index, leader_commit, prev_log_term \
       = msg['term'], msg['prev_log_index'], msg['leader_commit'], msg['prev_log_term']
     entries = list(map(LogEntry.from_dict, msg['entries']))
@@ -272,6 +289,8 @@ class Replica:
       self.assumed_leader = msg['src']
       self.term_number = leader_term
       self.state = State.FOLLOWER
+      self.votedFor = None
+      self.process_queue()
     if len(msg['entries']) == 0:
       return
     success = (
@@ -281,8 +300,8 @@ class Replica:
     )
     if success:
       self.update_log(entries, prev_log_index + 1)
-    #else:
-      #print("FAILED")
+    else:
+      print("FAILED")
       #print('leader_term:', leader_term, flush=True)
       #print('prev_log_index', prev_log_index, flush=True)
       #print('leader_term >= self.term_number', leader_term >= self.term_number, flush=True)
@@ -298,11 +317,6 @@ class Replica:
       'success': success,
       'confirmed_index': confirmed_index
     }
-    if 'MID' in msg:
-      response.update({
-        'putter': msg['putter'],
-        'MID': msg['MID']
-      })
     self.send(response, msg['src'], MessageType.APPEND_ACK)
 
   def update_log(self, entries: list, offset: int):
@@ -314,7 +328,7 @@ class Replica:
         break
     #print('updated log from', str(before), 'to', str(self.log), flush=True)
 
-  def send_append(self, follower: str, entries=None, putter=None, mid=None):
+  def send_append(self, follower: str, entries=None):
       prev_log_index = self.follower_confirmed_indices[follower]
       # Log is empty/prev_log_index starts as -1, creates index error
       # sets prev_log_term to self term number, probably not right!!
@@ -329,12 +343,7 @@ class Replica:
         'entries': entries,
         'leader_commit': self.commit_index
       }
-      if putter is not None:
-        self.put_status[mid] = 0, False
-        response.update({
-          'putter': putter,
-          'MID': mid
-        })
+
       self.send(response, follower, MessageType.APPEND)
 
 if __name__ == "__main__":
