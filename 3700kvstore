@@ -275,10 +275,10 @@ class Replica:
       entry = self.log[i]
       if entry.mid in self.not_responded_puts:
         self.values[entry.key] = entry.value
-        self.send({'MID': entry.mid}, entry.putter, MessageType.OK)
-        self.not_responded_puts.remove(entry.mid)
-        self.put_status[entry.mid] = 0, True
-    
+        if self.state == State.LEADER:
+          self.send({'MID': entry.mid}, entry.putter, MessageType.OK)
+          self.not_responded_puts.remove(entry.mid)
+          self.put_status[entry.mid] = 0, True
 
   def handle_append(self, msg: dict):
     self.timer = time.time()
@@ -291,6 +291,7 @@ class Replica:
       self.state = State.FOLLOWER
       self.votedFor = None
       self.process_queue()
+    self.commit_to(leader_commit)
     if len(msg['entries']) == 0:
       return
     success = (
@@ -310,8 +311,6 @@ class Replica:
       #if leader_term >= self.term_number and prev_log_index < len(self.log) and prev_log_index > 0:
       #  print('prev_log_term == self.log[prev_log_index].term_id)', prev_log_term == self.log[prev_log_index].term_id, flush=True)
     confirmed_index = len(self.log) - 1
-    if leader_commit > self.commit_index:
-      self.commit_to(leader_commit)
     response = {
       'term': self.term_number,
       'success': success,
