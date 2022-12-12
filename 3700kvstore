@@ -83,6 +83,7 @@ class Replica:
     self.follower_confirmed_indices = dict.fromkeys(others, -1)
 
     self.request_queue = []
+    # key: MID, value: (# of acks for put, responded to client yet?)
     self.put_status = {}
 
     self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -189,6 +190,8 @@ class Replica:
       print("I WON THE ELECTRON", flush=True)
       self.state = State.LEADER
       self.assumed_leader = self.id
+      for other in self.others:
+        self.follower_confirmed_indices[other] = self.commit_index
       self.process_queue()
       for other in self.others:
         self.send_append(other)
@@ -261,11 +264,8 @@ class Replica:
       if not already_responded and majority_confirmed():
         self.commit_to(confirmed_index)
     else:
-      # todo: handle log resync
-      if not already_responded and ack_count == len(self.others) and not majority_confirmed():
-        self.send({'MID': mid}, putter, MessageType.FAIL)
-        self.not_responded_puts.remove(mid)
-        self.put_status[mid] = ack_count, True
+      self.follower_confirmed_indices[follower] -= 1
+      self.send_append(follower)
 
   def commit_to(self, index):
     to = min(index, len(self.log) - 1)
@@ -335,7 +335,7 @@ class Replica:
       prev_log_term = self.term_number if prev_log_index < 0 or prev_log_index >= len(self.log)\
           else self.log[prev_log_index].term_id
       if entries is None:
-        entries = list(map(lambda entry: entry.to_dict(), self.log[prev_log_index + 1:]))
+        entries = list(map(lambda entry: entry.to_dict(), self.log[max(prev_log_index + 1, 0):]))
       response = {
         'term': self.term_number,
         'prev_log_index': prev_log_index,
