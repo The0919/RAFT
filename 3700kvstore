@@ -6,7 +6,7 @@ from enum import Enum
 BROADCAST = "FFFF"
 UNKNOWN_ID = 'FFFF'
 HEARTBEAT_INTERVAL = .25
-HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 2
+HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 3
 ELECTION_TIMEOUT = 1
 
 class MessageType(Enum):
@@ -142,6 +142,7 @@ class Replica:
 
   def run(self):
     while True:
+      print(self.commit_index, len(self.values), flush=True)
       if self.state == State.LEADER:
         print('STILL HAVE NOT RESPONDED TO: ', self.not_responded_puts)
       if self.state == State.LEADER and time.time() - self.timer > HEARTBEAT_INTERVAL:
@@ -204,6 +205,7 @@ class Replica:
     self.votedFor = self.id
     self.assumed_leader = UNKNOWN_ID
     self.state = State.CANDIDATE
+    self.request_queue = []
     last_term = self.term_number if len(self.log) == 0 else self.log[-1].term_id
     self.send({
       'term':self.term_number,
@@ -265,6 +267,8 @@ class Replica:
       # update commit index if a majority of followers have confirmed up to at least
       if not already_responded and majority_confirmed():
         self.commit_to(confirmed_index)
+        for other in self.others:
+          self.send_append(other, [])
     else:
       self.follower_confirmed_indices[follower] -= 1
       self.send_append(follower)
@@ -275,12 +279,11 @@ class Replica:
     self.commit_index = max(self.commit_index, to)
     for i in range(ci, to + 1):
       entry = self.log[i]
-      if entry.mid in self.not_responded_puts:
-        self.values[entry.key] = entry.value
-        if self.state == State.LEADER:
-          self.send({'MID': entry.mid}, entry.putter, MessageType.OK)
-          self.not_responded_puts.remove(entry.mid)
-          self.put_status[entry.mid] = 0, True
+      self.values[entry.key] = entry.value
+      if self.state == State.LEADER and entry.mid in self.not_responded_puts:
+        self.send({'MID': entry.mid}, entry.putter, MessageType.OK)
+        self.not_responded_puts.remove(entry.mid)
+        self.put_status[entry.mid] = 0, True
 
   def handle_append(self, msg: dict):
     self.timer = time.time()
