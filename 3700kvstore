@@ -6,7 +6,8 @@ from enum import Enum
 BROADCAST = "FFFF"
 UNKNOWN_ID = 'FFFF'
 HEARTBEAT_INTERVAL = .25
-ELECTION_TIMEOUT = HEARTBEAT_INTERVAL * 5
+HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 2
+ELECTION_TIMEOUT = 1
 
 class MessageType(Enum):
   HELLO = 'hello'
@@ -149,7 +150,8 @@ class Replica:
         for other in self.others:
           self.send_append(other, [])
 
-      if self.state != State.LEADER and time.time() - self.timer > ELECTION_TIMEOUT:
+      if (self.state == State.FOLLOWER and time.time() - self.timer > HEARTBEAT_TIMEOUT)\
+          or (self.state == State.CANDIDATE and time.time() - self.timer > ELECTION_TIMEOUT):
         print("NO HEARTBEAT, 'lection time", flush=True)
         self.timer = time.time()
         self.start_election()
