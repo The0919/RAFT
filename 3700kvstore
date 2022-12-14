@@ -142,7 +142,7 @@ class Replica:
 
   def run(self):
     while True:
-      print(self.commit_index, len(self.values), flush=True)
+      #print(self.commit_index, len(self.values), flush=True)
       if self.state == State.LEADER:
         print('STILL HAVE NOT RESPONDED TO: ', self.not_responded_puts)
       if self.state == State.LEADER and time.time() - self.timer > HEARTBEAT_INTERVAL:
@@ -186,9 +186,10 @@ class Replica:
     self.update_term(msg['term'])
     voted_for, total_votes = self.votes
     if msg['voteGranted']:
-      self.votes = voted_for+1, total_votes+1
+      voted_for += 1
+      total_votes += 1
     else:
-      self.votes = voted_for, total_votes+1
+      total_votes += 1
     if voted_for > (len(self.others)+1) // 2:
       print("I WON THE ELECTRON", flush=True)
       self.state = State.LEADER
@@ -198,6 +199,7 @@ class Replica:
       self.process_queue()
       for other in self.others:
         self.send_append(other)
+    self.votes = voted_for, total_votes
 
   def start_election(self):
     self.votes = 1, 1
