@@ -70,12 +70,13 @@ class LogEntry:
     )
 
 
-# Takes a string message from a client and turns it into 
+# Takes a string message from a client and turns it into a JSON with a type field
 def parse_msg(s: str):
   parsed = json.loads(s)
   parsed['type'] = MessageType(parsed['type'])
   return parsed
 
+# Represents a single replica in the network, it could be a leader, a follower, or a candidate
 class Replica:
   def __init__(self, port, id, others):
     self.assumed_leader = UNKNOWN_ID
@@ -93,7 +94,10 @@ class Replica:
     self.values = {}
     self.follower_confirmed_indices = dict.fromkeys(others, -1)
 
+    # If the leader is unknown, the replica will queue any received requests and redirect them
+    # once a leader is discovered
     self.request_queue = []
+
     # key: MID, value: (# of acks for put, responded to client yet?)
     self.put_status = {}
 
@@ -111,6 +115,8 @@ class Replica:
     self.send({}, BROADCAST, MessageType.HELLO)
     print("Sent hello message.", flush=True)
 
+    # Calls the appropriate method depending on the state of this replica and the type
+    # of message received
     self.MESSAGE_HANDLING = {
       State.LEADER: {
         MessageType.GET: self.handle_get,
@@ -133,10 +139,10 @@ class Replica:
 
   def handle_msg(self, msg: dict):
     msg_type = msg['type']
-    #print("Recieved Message:", self.state)
     if msg_type in self.MESSAGE_HANDLING[self.state]:
       self.MESSAGE_HANDLING[self.state][msg_type](msg)
 
+  # Sends a complete message to a client or another replica
   def send(self, message: dict, to: str, t: MessageType):
     self.freq[t.value] += 1
     #print("Sent:", t.value, 'freqs:', self.freq, flush=True)
@@ -146,27 +152,25 @@ class Replica:
       'dst': to,
       'leader': self.assumed_leader
     })
-    if to not in self.others and to != self.id:
-      print("SENT MESSAGE TO CLIENT", message)
     self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
+  # The main loop, receives messages from clients or other replicas, processes them, and sends
+  # responses
   def run(self):
     while True:
-      #print(self.commit_index, len(self.values), flush=True)
-      if self.state == State.LEADER:
-        print('STILL HAVE NOT RESPONDED TO: ', self.not_responded_puts)
+      # If we are the leader and it is time to send a heartbeat, send a heartbeat
       if self.state == State.LEADER and time.time() - self.timer > HEARTBEAT_INTERVAL:
-        print("HEARTBEAT SENT", flush=True)
         self.timer = time.time()
         for other in self.others:
           self.send_append(other, [])
-
+      
+      # If we are a follower or candidate and we have not heard from a leader, start an election
       if (self.state == State.FOLLOWER and time.time() - self.timer > self.heartbeat_timeout)\
           or (self.state == State.CANDIDATE and time.time() - self.timer > ELECTION_TIMEOUT):
-        print("NO HEARTBEAT, 'lection time", flush=True)
         self.timer = time.time()
         self.start_election()
     
+      # If there is a new message for us to read, read it and process it
       readable, writable, exceptional = select.select([self.socket], [], [], .5)
       if len(readable) > 0:
         data, addr = self.socket.recvfrom(65535)
@@ -175,6 +179,8 @@ class Replica:
         print("Received message '%s'" % (msg,), flush=True)
         self.handle_msg(parse_msg(msg))
 
+  # If the given term is greater than our own, we are either demoted as leader or we know a new
+  # election is won and we update our term number
   def update_term(self, term):
     if self.term_number < term:
       if self.state == State.LEADER or self.state == State.CANDIDATE:
@@ -182,30 +188,35 @@ class Replica:
         self.state = State.FOLLOWER
       self.votedFor = None
       self.term_number = term
-
+  
+  # If we need to send a redirect message
   def handle_redirect(self, msg):
     if self.assumed_leader == UNKNOWN_ID:
       self.handle_defer(msg)
       return
     self.send({'MID': msg['MID']}, msg['src'], MessageType.REDIRECT)
 
+  # Defers a message by queuing it to be processed later
   def handle_defer(self, msg):
     self.request_queue.append(msg)
 
+  # If we receive an acknowledgement for a vote request
   def handle_vote_request_ack(self, msg):
     self.update_term(msg['term'])
     voted_for, total_votes = self.votes
+    # If we got their vote, add it to the total
     if msg['voteGranted']:
       voted_for += 1
       total_votes += 1
     else:
       total_votes += 1
+    # If we win the election, declare ourselves the winner
     if voted_for > (len(self.others)+1) // 2:
-      print("I WON THE ELECTRON", flush=True)
       self.state = State.LEADER
       self.assumed_leader = self.id
       for other in self.others:
         self.follower_confirmed_indices[other] = self.commit_index
+      # We know the new leader, so process any messages in the queue 
       self.process_queue()
       for other in self.others:
         self.send_append(other)
@@ -270,9 +281,10 @@ class Replica:
       self.state = State.FOLLOWER
       return
     mid = self.log[msg['confirmed_index']].mid
-    if mid in self.put_status:
-      ack_count, already_responded = self.put_status[mid]
-      self.put_status[mid] = ack_count + 1, already_responded
+    if mid not in self.put_status:
+      self.put_status[mid] = 1, False
+    ack_count, already_responded = self.put_status[mid]
+    self.put_status[mid] = ack_count + 1, already_responded
 
     confirmed_index = msg['confirmed_index']
     confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
