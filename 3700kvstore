@@ -261,11 +261,14 @@ class Replica:
     while len(self.request_queue) > 0:
       self.handle_msg(self.request_queue.pop())
 
+  # handle a client GET request as a leader, returning the value corresponding
+  # to the key given
   def handle_get(self, msg: dict):
     key = msg['key']
     value = self.values[key] if key in self.values else ''
     self.send({'value': value, 'MID': msg['MID']}, msg['src'], MessageType.OK)
 
+  # handle a client PUT request as a leader, sending append RPCs to followers
   def handle_put(self, msg: dict):
     key, value = msg['key'], msg['value']
     # add the message to the log
@@ -276,6 +279,9 @@ class Replica:
     for follower in self.others:
       self.send_append(follower)
 
+  # handle an acknowledgement to an append RPC sent by this replica
+  # update the status of the PUT of interest, waiting for a majority
+  # of updates to be confirmed before committing a log entry
   def handle_append_ack(self, msg: dict):
     follower, term, success = msg['src'], msg['term'], msg['success']
     self.update_term(term)
