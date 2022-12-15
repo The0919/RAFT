@@ -255,6 +255,9 @@ class Replica:
   def handle_append_ack(self, msg: dict):
     follower, term, success = msg['src'], msg['term'], msg['success']
     self.update_term(term)
+    if len(self.log) <= msg['confirmed_index']:
+      self.state = State.FOLLOWER
+      return
     mid = self.log[msg['confirmed_index']].mid
     ack_count, already_responded = self.put_status[mid]
     self.put_status[mid] = ack_count + 1, already_responded
