@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-# RAFT PAPER SECION 5.4.2??????????
-import argparse, socket, time, json, select, struct, sys, math, os
+import argparse, socket, time, json, select, struct, sys, math, os, random
 from enum import Enum
 
 BROADCAST = "FFFF"
 UNKNOWN_ID = 'FFFF'
+# Time in seconds before sending a new heartbeat
 HEARTBEAT_INTERVAL = .25
-HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 3
+
+# Time in seconds before starting a new election during an ongoing election if the
+# candidate has not heard from a new leader
 ELECTION_TIMEOUT = 1
 
+# Represents the possible types of messages a replica could receive
 class MessageType(Enum):
   HELLO = 'hello'
   GET = 'get'
@@ -21,11 +24,15 @@ class MessageType(Enum):
   REQUEST_VOTE_ACK = 'vote ack'
   FAIL = 'fail'
 
+# Represents the possible states of a replica
 class State(Enum):
   LEADER = 'leader'
   FOLLOWER = 'follower'
   CANDIDATE = 'candidate'
 
+# Represents an entry in a replica's log, including the key-value pair submitted by the put
+# message, the current term when the message was received, the MID of the original message 
+# and the id of the client the put the data
 class LogEntry:
   def __init__(self, term_id: int, key: str, value: str, mid: str, putter: str):
     self.term_id = term_id
@@ -34,6 +41,7 @@ class LogEntry:
     self.mid = mid
     self.putter = putter
 
+  # Converts this data into a dict
   def to_dict(self):
     return {
       'term': self.term_id,
@@ -49,6 +57,7 @@ class LogEntry:
   def __repr__(self):
     return self.__str__()
 
+  # Turns a dict with the required fields into an object of this type
   @staticmethod
   def from_dict(d: dict):
     return LogEntry(d['term'], d['key'], d['value'], d['MID'], d['putter'])
@@ -61,6 +70,7 @@ class LogEntry:
     )
 
 
+# Takes a string message from a client and turns it into 
 def parse_msg(s: str):
   parsed = json.loads(s)
   parsed['type'] = MessageType(parsed['type'])
@@ -76,6 +86,7 @@ class Replica:
     self.others = others
     self.votes = None
     self.votedFor = None
+    self.heartbeat_timeout = random.uniform(.5, 1.0)
 
     self.log: list[LogEntry] = []
     self.commit_index = -1
@@ -150,7 +161,7 @@ class Replica:
         for other in self.others:
           self.send_append(other, [])
 
-      if (self.state == State.FOLLOWER and time.time() - self.timer > HEARTBEAT_TIMEOUT)\
+      if (self.state == State.FOLLOWER and time.time() - self.timer > self.heartbeat_timeout)\
           or (self.state == State.CANDIDATE and time.time() - self.timer > ELECTION_TIMEOUT):
         print("NO HEARTBEAT, 'lection time", flush=True)
         self.timer = time.time()
@@ -259,8 +270,9 @@ class Replica:
       self.state = State.FOLLOWER
       return
     mid = self.log[msg['confirmed_index']].mid
-    ack_count, already_responded = self.put_status[mid]
-    self.put_status[mid] = ack_count + 1, already_responded
+    if mid in self.put_status:
+      ack_count, already_responded = self.put_status[mid]
+      self.put_status[mid] = ack_count + 1, already_responded
 
     confirmed_index = msg['confirmed_index']
     confirmed_at_least = lambda f: self.follower_confirmed_indices[f] >= confirmed_index
