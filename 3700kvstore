@@ -222,6 +222,7 @@ class Replica:
         self.send_append(other)
     self.votes = voted_for, total_votes
 
+  # Starts a new election with self as the candidate 
   def start_election(self):
     self.votes = 1, 1
     self.term_number += 1
@@ -237,8 +238,9 @@ class Replica:
       'lastLogTerm': last_term
       }, BROADCAST, MessageType.REQUEST_VOTE)
 
+  # If we receive a vote request from another replica, give them the vote if they have an equal or
+  # greater log length, otherwise vote for ourselves
   def handle_vote_request(self, msg: dict):
-    #print("GOT VOTE REQUEST", flush=True)
     self.timer = time.time()
     candidate_id, candidate_log_index, candidate_term =\
         msg['candidateId'], msg['lastLogIndex'], msg['term']
@@ -248,13 +250,13 @@ class Replica:
         and candidate_term >= self.term_number
         and candidate_log_index >= len(self.log)-1)
     if grant_vote:
-      #print("VOTED FOR", candidate_id, self.term_number, flush=True)
       self.votedFor = candidate_id
     self.send({
       'term': self.term_number,
       'voteGranted': grant_vote
       }, candidate_id, MessageType.REQUEST_VOTE_ACK)
 
+  # Processes our queue of unanswered messages all at once
   def process_queue(self):
     while len(self.request_queue) > 0:
       self.handle_msg(self.request_queue.pop())
